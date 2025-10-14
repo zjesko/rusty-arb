@@ -55,7 +55,6 @@ where
             })?;
 
         tracing::info!("Successfully synced pool state");
-        tracing::info!("State space manager: {:?}", state_space_manager.state);
 
         // state_space_manager.subscribe()
 

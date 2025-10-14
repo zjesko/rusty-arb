@@ -6,7 +6,10 @@ use alloy::{
     transports::ws::WsConnect,
 };
 use rustyarb::{
-    collectors::uniswapv3::UniV3Collector,
+    collectors::{
+        uniswapv3::UniV3Collector,
+        hyperliquid::{HyperliquidCollector, HyperliquidBbo},
+    },
     engine::Engine,
     types::{CollectorMap},
 };
@@ -16,6 +19,7 @@ use tracing_subscriber::{filter, prelude::*};
 #[derive(Debug, Clone)]
 pub enum Event {
     PoolUpdate(Vec<alloy::primitives::Address>),
+    HyperliquidBbo(HyperliquidBbo),
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +56,14 @@ async fn main() -> Result<()> {
         |amms| Event::PoolUpdate(amms),
     );
     engine.add_collector(Box::new(hyperswap_collector));
+
+    // Set up collector for Hyperliquid HYPE/USDC spot market
+    let hyperliquid_collector = Box::new(HyperliquidCollector::new("@107".to_string()));
+    let hyperliquid_collector = CollectorMap::new(
+        hyperliquid_collector,
+        |bbo| Event::HyperliquidBbo(bbo),
+    );
+    engine.add_collector(Box::new(hyperliquid_collector));
 
     info!("Starting engine...");
 
