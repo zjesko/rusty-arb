@@ -65,9 +65,9 @@ where
     }
 
     /// Adds a strategy to be used by the engine.
-    // pub fn add_strategy(&mut self, strategy: Box<dyn Strategy<E, A>>) {
-        // self.strategies.push(strategy);
-    // }
+    pub fn add_strategy(&mut self, strategy: Box<dyn Strategy<E, A>>) {
+        self.strategies.push(strategy);
+    }
 
     /// Adds an executor to be used by the engine.
     // pub fn add_executor(&mut self, executor: Box<dyn Executor<A>>) {
@@ -87,16 +87,10 @@ where
         // This prevents the broadcast channel from closing due to no receivers
         let mut event_receiver = event_sender.subscribe();
         set.spawn(async move {
-            info!("starting event logger... ");
             loop {
                 match event_receiver.recv().await {
-                    Ok(event) => {
-                        info!("Event received: {:?}", event);
-                    }
-                    Err(e) => {
-                        error!("error receiving event: {}", e);
-                        break;
-                    }
+                    Ok(_) => {}
+                    Err(_) => break,
                 }
             }
         });
@@ -119,28 +113,28 @@ where
         // }
 
         // Spawn strategies in separate threads.
-        // for mut strategy in self.strategies {
-        //     let mut event_receiver = event_sender.subscribe();
-        //     let action_sender = action_sender.clone();
-        //     strategy.sync_state().await?;
+        for mut strategy in self.strategies {
+            let mut event_receiver = event_sender.subscribe();
+            let action_sender_clone = _action_sender.clone();
+            strategy.sync_state().await?;
 
-        //     set.spawn(async move {
-        //         info!("starting strategy... ");
-        //         loop {
-        //             match event_receiver.recv().await {
-        //                 Ok(event) => {
-        //                     for action in strategy.process_event(event).await {
-        //                         match action_sender.send(action) {
-        //                             Ok(_) => {}
-        //                             Err(e) => error!("error sending action: {}", e),
-        //                         }
-        //                     }
-        //                 }
-        //                 Err(e) => error!("error receiving event: {}", e),
-        //             }
-        //         }
-        //     });
-        // }
+            set.spawn(async move {
+                info!("starting strategy... ");
+                loop {
+                    match event_receiver.recv().await {
+                        Ok(event) => {
+                            for action in strategy.process_event(event).await {
+                                match action_sender_clone.send(action) {
+                                    Ok(_) => {}
+                                    Err(e) => error!("error sending action: {}", e),
+                                }
+                            }
+                        }
+                        Err(e) => error!("error receiving event: {}", e),
+                    }
+                }
+            });
+        }
 
         // Spawn collectors in separate threads.
         for collector in self.collectors {

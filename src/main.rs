@@ -8,24 +8,14 @@ use alloy::{
 use rustyarb::{
     collectors::{
         uniswapv3::UniV3Collector,
-        hyperliquid::{HyperliquidCollector, HyperliquidBbo},
+        hyperliquid::HyperliquidCollector,
     },
     engine::Engine,
-    types::{CollectorMap},
+    strategies::hype_usdc_cross_arbitrage::{HypeUsdcCrossArbitrage, Event, Action},
+    types::CollectorMap,
 };
 use tracing::{info, Level};
 use tracing_subscriber::{filter, prelude::*};
-
-#[derive(Debug, Clone)]
-pub enum Event {
-    PoolUpdate(Vec<alloy::primitives::Address>),
-    HyperliquidBbo(HyperliquidBbo),
-}
-
-#[derive(Debug, Clone)]
-pub enum Action {
-    // Placeholder for future actions
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,37 +27,31 @@ async fn main() -> Result<()> {
         .with(filter)
         .init();
 
-    let rpc_endpoint = "";
-    info!("Connecting to WebSocket endpoint: {}", rpc_endpoint);
-    
+    let rpc_endpoint = "wss://hyperliquid-mainnet.g.alchemy.com/v2/";
     let ws = WsConnect::new(rpc_endpoint);
     let provider = Arc::new(ProviderBuilder::new().connect_ws(ws).await?);
     
-    // Set up engine
     let mut engine: Engine<Event, Action> = Engine::default();
 
-    // Set up collector for Hyperswap WHYPE/USDC pool
     let hyperswap_collector = Box::new(UniV3Collector::new(
         provider.clone(),
         alloy::primitives::address!("0xe712d505572b3f84c1b4deb99e1beab9dd0e23c9"),
     ));
-    let hyperswap_collector = CollectorMap::new(
+    engine.add_collector(Box::new(CollectorMap::new(
         hyperswap_collector,
-        |amms| Event::PoolUpdate(amms),
-    );
-    engine.add_collector(Box::new(hyperswap_collector));
+        |pool_state| Event::PoolUpdate(pool_state),
+    )));
 
-    // Set up collector for Hyperliquid HYPE/USDC spot market
     let hyperliquid_collector = Box::new(HyperliquidCollector::new("@107".to_string()));
-    let hyperliquid_collector = CollectorMap::new(
+    engine.add_collector(Box::new(CollectorMap::new(
         hyperliquid_collector,
         |bbo| Event::HyperliquidBbo(bbo),
-    );
-    engine.add_collector(Box::new(hyperliquid_collector));
+    )));
+
+    engine.add_strategy(Box::new(HypeUsdcCrossArbitrage::new()));
 
     info!("Starting engine...");
 
-    // Start engine
     if let Ok(mut set) = engine.run().await {
         while let Some(res) = set.join_next().await {
             info!("Task completed: {:?}", res);
