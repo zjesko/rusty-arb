@@ -27,8 +27,10 @@ async fn main() -> Result<()> {
         .with(filter)
         .init();
 
-    let rpc_endpoint = "wss://hyperliquid-mainnet.g.alchemy.com/v2/";
-    let ws = WsConnect::new(rpc_endpoint);
+    dotenv::dotenv().ok();
+    
+    let ws_rpc_url = std::env::var("RPC_URL_WS")?;
+    let ws = WsConnect::new(ws_rpc_url);
     let provider = Arc::new(ProviderBuilder::new().connect_ws(ws).await?);
     
     let mut engine: Engine<Event, Action> = Engine::default();
