@@ -12,11 +12,9 @@ pub struct Engine<E, A> {
     collectors: Vec<Box<dyn Collector<E>>>,
 
     /// The set of strategies that the engine will use to process events.
-    #[allow(dead_code)]
     strategies: Vec<Box<dyn Strategy<E, A>>>,
 
     /// The set of executors that the engine will use to execute actions.
-    #[allow(dead_code)]
     executors: Vec<Box<dyn Executor<A>>>,
 
     /// The capacity of the event channel.
@@ -70,9 +68,9 @@ where
     }
 
     /// Adds an executor to be used by the engine.
-    // pub fn add_executor(&mut self, executor: Box<dyn Executor<A>>) {
-        // self.executors.push(executor);
-    // }
+    pub fn add_executor(&mut self, executor: Box<dyn Executor<A>>) {
+        self.executors.push(executor);
+    }
 
     /// The core run loop of the engine. This function will spawn a thread for
     /// each collector, strategy, and executor. It will then orchestrate the
@@ -96,21 +94,21 @@ where
         });
 
         // Spawn executors in separate threads.
-        // for executor in self.executors {
-            // let mut receiver = action_sender.subscribe();
-            // set.spawn(async move {
-                // info!("starting executor... ");
-                // loop {
-                    // match receiver.recv().await {
-                        // Ok(action) => match executor.execute(action).await {
-                            // Ok(_) => {}
-                            // Err(e) => error!("error executing action: {}", e),
-                        // },
-                        // Err(e) => error!("error receiving action: {}", e),
-                    // }
-                // }
-            // });
-        // }
+        for executor in self.executors {
+            let mut receiver = _action_sender.subscribe();
+            set.spawn(async move {
+                info!("starting executor... ");
+                loop {
+                    match receiver.recv().await {
+                        Ok(action) => match executor.execute(action).await {
+                            Ok(_) => {}
+                            Err(e) => error!("error executing action: {}", e),
+                        },
+                        Err(e) => error!("error receiving action: {}", e),
+                    }
+                }
+            });
+        }
 
         // Spawn strategies in separate threads.
         for mut strategy in self.strategies {

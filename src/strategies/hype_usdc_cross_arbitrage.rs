@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use tracing::info;
+use alloy::primitives::Address;
 
 use crate::collectors::{
     hyperliquid::HyperliquidBbo,
@@ -14,22 +15,47 @@ pub enum Event {
     HyperliquidBbo(HyperliquidBbo),
 }
 
-#[derive(Debug, Clone)]
-pub enum Action {}
+// Re-export for convenience
+pub use crate::executors::arbitrage::ArbitrageAction as Action;
 
 #[derive(Debug, Clone)]
 pub struct HypeUsdcCrossArbitrage {
     hyperliquid_bbo: Option<HyperliquidBbo>,
     hyperswap_state: Option<UniV3PoolState>,
-    min_profit_pct: f64,
+    // Fee and order configuration
+    order_size_usd: f64,
+    hl_maker_fee_bps: f64,  // e.g., 2.0 for 0.02% fee, -2.0 for 0.02% rebate
+    dex_gas_fee_usd: f64,
+    min_profit_bps: f64,
+    // Token addresses for DEX swaps (used when execution is enabled)
+    #[allow(dead_code)]
+    usdc_address: Address,
+    #[allow(dead_code)]
+    hype_address: Address,
+    #[allow(dead_code)]
+    dex_fee: u32,
 }
 
 impl HypeUsdcCrossArbitrage {
-    pub fn new() -> Self {
+    pub fn new(
+        order_size_usd: f64,
+        hl_maker_fee_bps: f64,
+        dex_gas_fee_usd: f64,
+        min_profit_bps: f64,
+        usdc_address: Address,
+        hype_address: Address,
+        dex_fee: u32,
+    ) -> Self {
         Self {
             hyperliquid_bbo: None,
             hyperswap_state: None,
-            min_profit_pct: 0.0001,
+            order_size_usd,
+            hl_maker_fee_bps,
+            dex_gas_fee_usd,
+            min_profit_bps,
+            usdc_address,
+            hype_address,
+            dex_fee,
         }
     }
 
@@ -59,48 +85,125 @@ impl HypeUsdcCrossArbitrage {
             return None;
         }
 
-        let bid = bbo.levels[0].as_ref()?.px.parse::<f64>().ok()?;
-        let ask = bbo.levels[1].as_ref()?.px.parse::<f64>().ok()?;
+        let raw_bid = bbo.levels[0].as_ref()?.px.parse::<f64>().ok()?;
+        let raw_ask = bbo.levels[1].as_ref()?.px.parse::<f64>().ok()?;
+
+        // Apply maker fee to spread (like we do for DEX)
+        // Convert bps to decimal: positive fee = cost, negative fee = rebate
+        let hl_maker_fee = self.hl_maker_fee_bps / 10000.0;
+        let bid = raw_bid * (1.0 - hl_maker_fee);
+        let ask = raw_ask * (1.0 + hl_maker_fee);
 
         Some((bid, ask))
     }
 
-    fn check_arbitrage(&self) {
+    /// Calculate net profit in basis points after all fees
+    fn calculate_net_profit_bps(&self, buy_price: f64, sell_price: f64) -> f64 {
+        // Gross profit percentage (fees already in spread)
+        let gross_profit_pct = (sell_price - buy_price) / buy_price;
+        
+        // DEX gas fee as percentage of trade
+        let gas_fee_pct = self.dex_gas_fee_usd / self.order_size_usd;
+        
+        // Net profit percentage after gas fee
+        let net_profit_pct = gross_profit_pct - gas_fee_pct;
+        
+        // Convert to basis points
+        net_profit_pct * 10000.0
+    }
+
+    fn generate_action(&self, buy_dex: bool, dex_price: f64, hl_price: f64) -> Action {
+        use alloy::primitives::U256;
+        use crate::executors::{univ3::UniV3SwapAction, hyperliquid::HyperliquidOrderAction};
+        
+        let hype_amount_raw = self.order_size_usd / dex_price;
+        let hype_amount = (hype_amount_raw * 10000.0).round() / 10000.0;
+        let usdc_raw = (self.order_size_usd * 1_000_000.0) as u64;
+        let hype_raw = U256::from((hype_amount * 1e18) as u128);
+        
+        // Add slippage for IOC orders (50 bps = 0.5%)
+        let slippage_bps = 50.0;
+        
+        if buy_dex {
+            let hl_sell_price = hl_price * (1.0 - slippage_bps / 10000.0);
+            
+            Action {
+                dex_swap: UniV3SwapAction {
+                    token_in: self.usdc_address,
+                    token_out: self.hype_address,
+                    fee: self.dex_fee,
+                    amount_in: U256::from(usdc_raw),
+                    amount_out_min: U256::ZERO,
+                },
+                hl_order: HyperliquidOrderAction {
+                    coin: "HYPE/USDC".to_string(),
+                    is_buy: false,
+                    size: hype_amount,
+                    limit_px: hl_sell_price,
+                },
+                direction: "Buy DEX".to_string(),
+            }
+        } else {
+            let hl_buy_price = hl_price * (1.0 + slippage_bps / 10000.0);
+            
+            Action {
+                dex_swap: UniV3SwapAction {
+                    token_in: self.hype_address,
+                    token_out: self.usdc_address,
+                    fee: self.dex_fee,
+                    amount_in: hype_raw,
+                    amount_out_min: U256::ZERO,
+                },
+                hl_order: HyperliquidOrderAction {
+                    coin: "HYPE/USDC".to_string(),
+                    is_buy: true,
+                    size: hype_amount,
+                    limit_px: hl_buy_price,
+                },
+                direction: "Buy HL".to_string(),
+            }
+        }
+    }
+    
+    fn check_and_generate_actions(&mut self) -> Vec<Action> {
         let (hl_bbo, dex_state) = match (&self.hyperliquid_bbo, &self.hyperswap_state) {
             (Some(b), Some(d)) => (b, d),
-            _ => return,
+            _ => return vec![],
         };
 
         let (dex_bid, dex_ask) = match self.calculate_dex_bid_ask(dex_state) {
             Some(p) => p,
-            None => return,
+            None => return vec![],
         };
 
         let (hl_bid, hl_ask) = match self.get_hyperliquid_prices(hl_bbo) {
             Some(p) => p,
-            None => return,
+            None => return vec![],
         };
 
-        info!("📊 DEX: {:.4}/{:.4} | HL: {:.4}/{:.4}", dex_bid, dex_ask, hl_bid, hl_ask);
+        let net_profit_1_bps = self.calculate_net_profit_bps(dex_ask, hl_bid);
+        let net_profit_2_bps = self.calculate_net_profit_bps(hl_ask, dex_bid);
 
-        let profit_1 = ((hl_bid - dex_ask) / dex_ask) * 100.0;
-        if profit_1 > self.min_profit_pct {
-            info!("🚨 ARB: Buy DEX @ {:.4} → Sell CEX @ {:.4} | +{:.2}%", 
-                dex_ask, hl_bid, profit_1);
+        // Log spreads without slippage
+        info!("DEX {:.3}/{:.3} | HL {:.3}/{:.3} | Net: {:+.2}%/{:+.2}%",
+            dex_bid, dex_ask, hl_bid, hl_ask, net_profit_1_bps / 100.0, net_profit_2_bps / 100.0);
+
+        if net_profit_1_bps > self.min_profit_bps {
+            info!("🎯 EXEC: Buy DEX → Sell HL");
+            return vec![self.generate_action(true, dex_ask, hl_bid)];
+        }
+        if net_profit_2_bps > self.min_profit_bps {
+            info!("🎯 EXEC: Buy HL → Sell DEX");
+            return vec![self.generate_action(false, dex_bid, hl_ask)];
         }
 
-        let profit_2 = ((dex_bid - hl_ask) / hl_ask) * 100.0;
-        if profit_2 > self.min_profit_pct {
-            info!("🚨 ARB: Buy CEX @ {:.4} → Sell DEX @ {:.4} | +{:.2}%", 
-                hl_ask, dex_bid, profit_2);
-        }
+        vec![]
     }
 }
 
 #[async_trait]
 impl Strategy<Event, Action> for HypeUsdcCrossArbitrage {
     async fn sync_state(&mut self) -> Result<()> {
-        info!("Strategy initialized | Min profit: {:.2}%", self.min_profit_pct);
         Ok(())
     }
 
@@ -108,14 +211,14 @@ impl Strategy<Event, Action> for HypeUsdcCrossArbitrage {
         match event {
             Event::PoolUpdate(state) => {
                 self.hyperswap_state = Some(state);
-                self.check_arbitrage();
             }
             Event::HyperliquidBbo(bbo) => {
                 self.hyperliquid_bbo = Some(bbo);
-                self.check_arbitrage();
             }
         }
-        vec![]
+        
+        // Check for arbitrage opportunities and generate actions
+        self.check_and_generate_actions()
     }
 }
 

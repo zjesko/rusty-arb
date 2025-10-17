@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
+use tracing::info;
 use alloy::{
     primitives::{aliases::{U160, U24}, Address, U256},
     providers::Provider,
@@ -86,7 +87,8 @@ impl<P: Provider + 'static> Executor<UniV3SwapAction> for UniV3Executor<P> {
             .send()
             .await?;
         
-        let _tx_hash = *pending_tx.tx_hash();
+        let tx_hash = *pending_tx.tx_hash();
+        info!("DEX: 0x{:x}", tx_hash);
         
         Ok(())
     }
