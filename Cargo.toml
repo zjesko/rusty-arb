@@ -11,8 +11,10 @@ async-trait = "0.1.89"
 dotenv = "0.15"
 eyre = "0.6"
 hyperliquid_rust_sdk = { git = "https://github.com/hyperliquid-dex/hyperliquid-rust-sdk", branch = "master", version = "0.6.0" }
+serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.47.1", features = ["full"] }
 tokio-stream = "0.1.17"
+toml = "0.8"
 tracing = "0.1.41"
 tracing-subscriber = "0.3"
 uuid = { version = "1.6", features = ["v4"] }

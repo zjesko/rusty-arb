@@ -49,6 +49,7 @@ async fn main() -> Result<()> {
         UniV3Executor::new(provider.clone(), &private_key, router_address)?,
         HyperliquidExecutor::new(private_key.clone())?,
         exec_manager,
+        15,  // cooldown_secs
     );
 
     let test_scenarios = vec![

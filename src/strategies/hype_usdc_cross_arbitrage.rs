@@ -7,6 +7,7 @@ use crate::collectors::{
     hyperliquid::HyperliquidBbo,
     uniswapv3::UniV3PoolState,
 };
+use crate::config::StrategyConfig;
 use crate::types::Strategy;
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,7 @@ pub struct HypeUsdcCrossArbitrage {
     hl_maker_fee_bps: f64,  // e.g., 2.0 for 0.02% fee, -2.0 for 0.02% rebate
     dex_gas_fee_usd: f64,
     min_profit_bps: f64,
+    slippage_bps: f64,
     // Token addresses for DEX swaps (used when execution is enabled)
     #[allow(dead_code)]
     usdc_address: Address,
@@ -37,6 +39,28 @@ pub struct HypeUsdcCrossArbitrage {
 }
 
 impl HypeUsdcCrossArbitrage {
+    /// Create strategy from config (recommended)
+    pub fn from_config(config: &StrategyConfig) -> Result<Self> {
+        let usdc_address = config.token_a_address.parse()
+            .map_err(|_| anyhow::anyhow!("Invalid token_a address"))?;
+        let hype_address = config.token_b_address.parse()
+            .map_err(|_| anyhow::anyhow!("Invalid token_b address"))?;
+
+        Ok(Self {
+            hyperliquid_bbo: None,
+            hyperswap_state: None,
+            order_size_usd: config.order_size_usd,
+            hl_maker_fee_bps: config.hl_maker_fee_bps,
+            dex_gas_fee_usd: config.dex_gas_fee_usd,
+            min_profit_bps: config.min_profit_bps,
+            slippage_bps: config.slippage_bps,
+            usdc_address,
+            hype_address,
+            dex_fee: config.fee,
+        })
+    }
+
+    /// Create strategy directly (for examples/tests)
     pub fn new(
         order_size_usd: f64,
         hl_maker_fee_bps: f64,
@@ -53,6 +77,7 @@ impl HypeUsdcCrossArbitrage {
             hl_maker_fee_bps,
             dex_gas_fee_usd,
             min_profit_bps,
+            slippage_bps: 50.0,  // Default for examples
             usdc_address,
             hype_address,
             dex_fee,
@@ -121,11 +146,9 @@ impl HypeUsdcCrossArbitrage {
         let usdc_raw = (self.order_size_usd * 1_000_000.0) as u64;
         let hype_raw = U256::from((hype_amount * 1e18) as u128);
         
-        // Add slippage for IOC orders (50 bps = 0.5%)
-        let slippage_bps = 50.0;
-        
+        // Get slippage from config
         if buy_dex {
-            let hl_sell_price = hl_price * (1.0 - slippage_bps / 10000.0);
+            let hl_sell_price = hl_price * (1.0 - self.slippage_bps / 10000.0);
             
             Action {
                 dex_swap: UniV3SwapAction {
@@ -144,7 +167,7 @@ impl HypeUsdcCrossArbitrage {
                 direction: "Buy DEX".to_string(),
             }
         } else {
-            let hl_buy_price = hl_price * (1.0 + slippage_bps / 10000.0);
+            let hl_buy_price = hl_price * (1.0 + self.slippage_bps / 10000.0);
             
             Action {
                 dex_swap: UniV3SwapAction {
@@ -189,11 +212,13 @@ impl HypeUsdcCrossArbitrage {
             dex_bid, dex_ask, hl_bid, hl_ask, net_profit_1_bps / 100.0, net_profit_2_bps / 100.0);
 
         if net_profit_1_bps > self.min_profit_bps {
-            info!("🎯 EXEC: Buy DEX → Sell HL");
+            info!("🎯 EXEC: Buy DEX → Sell HL ({:.2} bps > {} bps threshold)", 
+                net_profit_1_bps, self.min_profit_bps);
             return vec![self.generate_action(true, dex_ask, hl_bid)];
         }
         if net_profit_2_bps > self.min_profit_bps {
-            info!("🎯 EXEC: Buy HL → Sell DEX");
+            info!("🎯 EXEC: Buy HL → Sell DEX ({:.2} bps > {} bps threshold)", 
+                net_profit_2_bps, self.min_profit_bps);
             return vec![self.generate_action(false, dex_bid, hl_ask)];
         }
 

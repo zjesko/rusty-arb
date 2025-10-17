@@ -1,0 +1,50 @@
+# RustyArb Configuration
+
+rpc_url_ws = "${RPC_URL_WS}"
+max_concurrent = 1
+cooldown_secs = 15
+
+# ============================================================================
+# STRATEGIES - Copy entire [[strategies]] block to add more pairs
+# ============================================================================
+
+[[strategies]]
+name = "HYPE/USDC Cross-Exchange Arb"
+enabled = true
+
+# DEX (UniswapV3)
+pool_address = "0xe712d505572b3f84c1b4deb99e1beab9dd0e23c9"
+router_address = "0x6D99e7f6747AF2cDbB5164b6DD50e40D4fDe1e77"
+fee = 3000
+
+# Tokens
+token_a_address = "0xb88339cb7199b77e23db6e890353e22632ba630f"
+token_b_address = "0x5555555555555555555555555555555555555555"
+
+# CEX (Hyperliquid)
+hyperliquid_coin = "@107"
+
+# Strategy Parameters
+order_size_usd = 20.0
+hl_maker_fee_bps = 2.0
+dex_gas_fee_usd = 0.0001
+min_profit_bps = 10.0
+slippage_bps = 50.0
+
+# ============================================================================
+# ADD MORE STRATEGIES - Just copy the block above
+# ============================================================================
+# [[strategies]]
+# name = "ETH/USDC Cross-Exchange Arb"
+# enabled = false
+# pool_address = "0x..."
+# router_address = "0x6D99e7f6747AF2cDbB5164b6DD50e40D4fDe1e77"
+# fee = 3000
+# token_a_address = "0xb88339cb7199b77e23db6e890353e22632ba630f"
+# token_b_address = "0x..."
+# hyperliquid_coin = "@0"
+# order_size_usd = 50.0
+# hl_maker_fee_bps = 2.0
+# dex_gas_fee_usd = 0.0002
+# min_profit_bps = 10.0
+# slippage_bps = 50.0

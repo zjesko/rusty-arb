@@ -24,6 +24,7 @@ pub struct ArbitrageExecutor<P> {
     dex_executor: UniV3Executor<P>,
     hl_executor: HyperliquidExecutor,
     exec_manager: Arc<ExecutionManager>,
+    cooldown_secs: u64,
 }
 
 impl<P> ArbitrageExecutor<P> {
@@ -31,11 +32,13 @@ impl<P> ArbitrageExecutor<P> {
         dex_executor: UniV3Executor<P>,
         hl_executor: HyperliquidExecutor,
         exec_manager: Arc<ExecutionManager>,
+        cooldown_secs: u64,
     ) -> Self {
         Self {
             dex_executor,
             hl_executor,
             exec_manager,
+            cooldown_secs,
         }
     }
 }
@@ -70,7 +73,7 @@ impl<P: Provider + 'static> Executor<ArbitrageAction> for ArbitrageExecutor<P> {
         Self::log_pnl(&action);
 
         // Cooldown
-        tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(self.cooldown_secs)).await;
 
         // Permit auto-releases here via Drop
         Ok(())

@@ -1,4 +1,6 @@
 pub mod collectors;
+/// This module contains configuration structures and loading.
+pub mod config;
 /// This module contains the [Engine](engine::Engine) struct, which is responsible
 /// for orchestrating data flows between components
 pub mod engine;

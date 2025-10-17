@@ -96,14 +96,21 @@ where
         // Spawn executors in separate threads.
         for executor in self.executors {
             let mut receiver = _action_sender.subscribe();
+            let executor = std::sync::Arc::new(executor);
             set.spawn(async move {
                 info!("starting executor... ");
                 loop {
                     match receiver.recv().await {
-                        Ok(action) => match executor.execute(action).await {
-                            Ok(_) => {}
-                            Err(e) => error!("error executing action: {}", e),
-                        },
+                        Ok(action) => {
+                            // Spawn concurrent task - multiple actions compete for semaphore
+                            let executor = executor.clone();
+                            tokio::spawn(async move {
+                                match executor.execute(action).await {
+                                    Ok(_) => {}
+                                    Err(e) => error!("error executing action: {}", e),
+                                }
+                            });
+                        }
                         Err(e) => error!("error receiving action: {}", e),
                     }
                 }
